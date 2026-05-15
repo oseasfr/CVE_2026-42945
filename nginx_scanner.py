@@ -1,39 +1,49 @@
 #!/usr/bin/env python3
 """
-nginx_scanner.py — CVE-2026-42945 (NGINX RIFT) Detection Tool
---------------------------------------------------------------
-Scans one or more targets for Nginx instances vulnerable to CVE-2026-42945.
-Accepts individual IPs, CIDR ranges, and ASN numbers as input.
+nginx_scanner.py — CVE-2026-42945 (NGINX RIFT) — Ferramenta de Detecção
+------------------------------------------------------------------------
+Varre um ou mais alvos em busca de instâncias Nginx vulneráveis ao CVE-2026-42945.
+Aceita IPs individuais, faixas CIDR e números de ASN como entrada.
 
-Usage examples:
+Exemplos de uso:
   python nginx_scanner.py --ip 192.168.1.10
   python nginx_scanner.py --cidr 10.0.0.0/24 172.16.0.0/16
   python nginx_scanner.py --asn AS15169
   python nginx_scanner.py --cidr 10.0.0.0/8 --asn AS13335 AS15169
-  python nginx_scanner.py --file targets.txt
+  python nginx_scanner.py --file alvos.txt
 
-targets.txt format (one entry per line, mix of IPs, CIDRs, ASNs):
+Formato do arquivo de alvos (um por linha, pode misturar IPs, CIDRs e ASNs):
   192.168.1.10
   10.0.0.0/24
   AS15169
 
-Requirements:
-  pip install requests packaging urllib3
+Dependências:
+  pip install requests packaging urllib3 dnspython
 """
 
+import json
 import requests
 import re
 import os
 import sys
 import time
-import socket
 import csv
 import argparse
 import ipaddress
 import urllib3
 from datetime import datetime
+from functools import lru_cache
 from packaging import version
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+try:
+    import dns.resolver
+    import dns.reversename
+    import dns.exception
+    HAS_DNSPYTHON = True
+except ImportError:
+    import socket
+    HAS_DNSPYTHON = False
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -44,33 +54,37 @@ YELLOW     = '\033[1;33m'
 CYAN       = '\033[0;36m'
 BOLD       = '\033[1m'
 RESET      = '\033[0m'
-GREEN_DARK = '\033[38;2;26;122;58m'   # #1a7a3a — banner ASCII art
+GREEN_DARK = '\033[38;2;26;122;58m'
 
-# --- CVE Config --------------------------------------------------------------
-CVE_ID          = "CVE-2026-42945"
-CVE_NAME        = "NGINX RIFT"
-FIXED_VERSION   = "1.30.1"
+# --- Configuração CVE --------------------------------------------------------
+CVE_ID        = "CVE-2026-42945"
+CVE_NAME      = "NGINX RIFT"
+FIXED_VERSION = "1.30.1"
 
-# --- Output paths ------------------------------------------------------------
+# --- Configuração DNS ---------------------------------------------------------
+DNS_WORKERS  = 200   # threads dedicadas à resolução DNS (I/O puro)
+DNS_TIMEOUT  = 1.5   # segundos por query PTR
+
+# --- Caminhos de saída -------------------------------------------------------
 LOG_DIR   = "./logs"
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE  = f"{LOG_DIR}/nginx_scan_{TIMESTAMP}.log"
-LOG_VULN  = f"{LOG_DIR}/nginx_scan_{TIMESTAMP}_vulnerable.txt"
-LOG_CSV   = f"{LOG_DIR}/nginx_scan_{TIMESTAMP}_results.csv"
+LOG_VULN  = f"{LOG_DIR}/nginx_scan_{TIMESTAMP}_vulneraveis.txt"
+LOG_CSV   = f"{LOG_DIR}/nginx_scan_{TIMESTAMP}_resultados.csv"
 
 
 # =============================================================================
-# Logging
+# Log
 # =============================================================================
 
 def log(level, msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     colors = {
-        "OK":   f"{GREEN}[SAFE]{RESET}",
+        "OK":   f"{GREEN}[SEGURO]{RESET}",
         "VULN": f"{RED}[VULN]{RESET}",
         "INFO": f"{CYAN}[INFO]{RESET}",
-        "WARN": f"{YELLOW}[WARN]{RESET}",
-        "ERR":  f"{RED}[ERR]{RESET}",
+        "WARN": f"{YELLOW}[AVISO]{RESET}",
+        "ERR":  f"{RED}[ERRO]{RESET}",
         "HEAD": "",
     }
     if level == "HEAD":
@@ -85,18 +99,63 @@ def log(level, msg):
 
 
 # =============================================================================
-# Target resolution
+# DNS — resolução reversa em batch paralelo
+# =============================================================================
+
+def _resolve_ptr_dnspython(ip: str) -> str:
+    """Resolução PTR usando dnspython com timeout controlado."""
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = DNS_TIMEOUT
+        rev = dns.reversename.from_address(ip)
+        answer = resolver.resolve(rev, "PTR")
+        return str(answer[0]).rstrip(".")
+    except Exception:
+        return "SEM-PTR"
+
+
+def _resolve_ptr_socket(ip: str) -> str:
+    """Fallback usando socket padrão do sistema."""
+    try:
+        import socket as _socket
+        hostname, _, _ = _socket.gethostbyaddr(ip)
+        return hostname
+    except Exception:
+        return "SEM-PTR"
+
+
+@lru_cache(maxsize=65536)
+def get_hostname(ip: str) -> str:
+    """Resolve PTR de um IP com cache — evita consultas duplicadas."""
+    if HAS_DNSPYTHON:
+        return _resolve_ptr_dnspython(ip)
+    return _resolve_ptr_socket(ip)
+
+
+def resolve_hostnames_batch(ips: list[str]) -> dict[str, str]:
+    """
+    Resolve PTR de uma lista de IPs em paralelo com DNS_WORKERS threads.
+    Retorna dict {ip: hostname}.
+    """
+    results: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=DNS_WORKERS) as executor:
+        futures = {executor.submit(get_hostname, ip): ip for ip in ips}
+        for future in as_completed(futures):
+            ip = futures[future]
+            results[ip] = future.result()
+    return results
+
+
+# =============================================================================
+# Resolução de alvos (ASN / CIDR / IP)
 # =============================================================================
 
 def resolve_asn(asn: str) -> list[str]:
-    """
-    Fetches CIDR prefixes announced by an ASN using the bgp.tools API.
-    Accepts formats: 'AS15169', 'as15169', '15169'.
-    """
+    """Resolve prefixos IPv4 de um ASN via bgp.tools, com fallback para RIPE."""
     asn_number = asn.upper().lstrip("AS")
     url = f"https://bgp.tools/table.jsonl?asn={asn_number}"
 
-    log("INFO", f"Resolving {asn.upper()} via bgp.tools ...")
+    log("INFO", f"Resolvendo {asn.upper()} via bgp.tools ...")
     try:
         resp = requests.get(url, timeout=15, headers={"User-Agent": "nginx-scanner/1.0"})
         resp.raise_for_status()
@@ -106,15 +165,11 @@ def resolve_asn(asn: str) -> list[str]:
             if not line:
                 continue
             try:
-                import json
                 entry = json.loads(line)
                 prefix = entry.get("CIDR") or entry.get("prefix") or entry.get("cidr")
-                if prefix:
-                    # Skip IPv6
-                    if ":" not in prefix:
-                        prefixes.append(prefix)
+                if prefix and ":" not in prefix:
+                    prefixes.append(prefix)
             except Exception:
-                # Fallback: plain-text CIDR per line
                 try:
                     ipaddress.ip_network(line, strict=False)
                     if ":" not in line:
@@ -123,19 +178,18 @@ def resolve_asn(asn: str) -> list[str]:
                     pass
 
         if not prefixes:
-            # Fallback to stat.ripe.net
             prefixes = resolve_asn_ripe(asn_number)
 
-        log("INFO", f"{asn.upper()} — {len(prefixes)} IPv4 prefix(es) found")
+        log("INFO", f"{asn.upper()} — {len(prefixes)} prefixo(s) IPv4 encontrado(s)")
         return prefixes
 
     except Exception as e:
-        log("WARN", f"bgp.tools failed for {asn}: {e}. Trying RIPE ...")
+        log("WARN", f"bgp.tools falhou para {asn}: {e}. Tentando RIPE ...")
         return resolve_asn_ripe(asn_number)
 
 
 def resolve_asn_ripe(asn_number: str) -> list[str]:
-    """Fallback ASN resolver using RIPE stat API."""
+    """Fallback de resolução de ASN via RIPE stat API."""
     url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn_number}"
     try:
         resp = requests.get(url, timeout=15, headers={"User-Agent": "nginx-scanner/1.0"})
@@ -143,20 +197,17 @@ def resolve_asn_ripe(asn_number: str) -> list[str]:
         data = resp.json()
         prefixes = [
             p["prefix"] for p in data.get("data", {}).get("prefixes", [])
-            if ":" not in p.get("prefix", ":")  # skip IPv6
+            if ":" not in p.get("prefix", ":")
         ]
-        log("INFO", f"AS{asn_number} — {len(prefixes)} IPv4 prefix(es) found via RIPE")
+        log("INFO", f"AS{asn_number} — {len(prefixes)} prefixo(s) encontrado(s) via RIPE")
         return prefixes
     except Exception as e:
-        log("ERR", f"RIPE fallback also failed for AS{asn_number}: {e}")
+        log("ERR", f"Fallback RIPE também falhou para AS{asn_number}: {e}")
         return []
 
 
 def expand_targets(ips=None, cidrs=None, asns=None, file=None) -> list[str]:
-    """
-    Resolves all input sources into a deduplicated, sorted list of CIDR strings.
-    Single IPs are normalised to /32.
-    """
+    """Resolve todas as fontes de entrada em uma lista deduplicada de CIDRs."""
     all_prefixes: list[str] = []
 
     if ips:
@@ -165,7 +216,10 @@ def expand_targets(ips=None, cidrs=None, asns=None, file=None) -> list[str]:
                 ipaddress.ip_address(ip)
                 all_prefixes.append(f"{ip}/32")
             except ValueError:
-                log("WARN", f"Invalid IP ignored: {ip}")
+                if "/" in ip:
+                    log("WARN", f"'{ip}' parece um CIDR — use --cidr em vez de --ip  (ex: --cidr {ip})")
+                else:
+                    log("WARN", f"Endereço IP inválido ignorado: '{ip}'")
 
     if cidrs:
         for cidr in cidrs:
@@ -173,7 +227,10 @@ def expand_targets(ips=None, cidrs=None, asns=None, file=None) -> list[str]:
                 ipaddress.ip_network(cidr, strict=False)
                 all_prefixes.append(cidr)
             except ValueError:
-                log("WARN", f"Invalid CIDR ignored: {cidr}")
+                if "/" not in cidr:
+                    log("WARN", f"'{cidr}' não tem prefixo — tente '{cidr}/24' ou use --ip para um IP único")
+                else:
+                    log("WARN", f"CIDR inválido ignorado: '{cidr}'")
 
     if asns:
         for asn in asns:
@@ -194,42 +251,32 @@ def expand_targets(ips=None, cidrs=None, asns=None, file=None) -> list[str]:
                             ipaddress.ip_network(entry, strict=False)
                             all_prefixes.append(entry)
                         except ValueError:
-                            log("WARN", f"Invalid CIDR in file ignored: {entry}")
+                            log("WARN", f"CIDR inválido no arquivo ignorado: {entry}")
                     else:
                         try:
                             ipaddress.ip_address(entry)
                             all_prefixes.append(f"{entry}/32")
                         except ValueError:
-                            log("WARN", f"Invalid entry in file ignored: {entry}")
+                            log("WARN", f"Entrada inválida no arquivo ignorada: {entry}")
         except FileNotFoundError:
-            log("ERR", f"File not found: {file}")
+            log("ERR", f"Arquivo não encontrado: {file}")
             sys.exit(1)
 
-    # Deduplicate preserving order
     seen = set()
     unique = []
     for p in all_prefixes:
         if p not in seen:
             seen.add(p)
             unique.append(p)
-
     return unique
 
 
 # =============================================================================
-# Scanner
+# Scanner HTTP/HTTPS
 # =============================================================================
 
-def get_hostname(ip: str) -> str:
-    try:
-        hostname, _, _ = socket.gethostbyaddr(ip)
-        return hostname
-    except Exception:
-        return "N/A"
-
-
 def get_nginx_version(ip: str, timeout: float = 2.0) -> str | None:
-    """Probes HTTP and HTTPS on standard ports. Returns Server header or None."""
+    """Sonda HTTP e HTTPS nas portas padrão. Retorna cabeçalho Server ou None."""
     for proto, port in [("http", 80), ("https", 443)]:
         url = f"{proto}://{ip}:{port}"
         try:
@@ -250,8 +297,8 @@ def get_nginx_version(ip: str, timeout: float = 2.0) -> str | None:
 
 def check_vulnerability(server_string: str) -> tuple:
     """
-    Returns (status, version_string).
-    status values: True (vulnerable), False (safe), 'Possibly' (hidden version), 'Undetermined'
+    Retorna (status, versão).
+    status: True (vulnerável), False (seguro), 'Possibly' (versão oculta), 'Undetermined'
     """
     match = re.search(r"nginx/([\d.]+)", server_string, re.IGNORECASE)
     if match:
@@ -269,12 +316,12 @@ def check_vulnerability(server_string: str) -> tuple:
     return False, "N/A"
 
 
-def scan_ip(ip: str) -> dict | None:
-    server_header = get_nginx_version(ip)
+def scan_ip(ip: str, hostname: str, timeout: float) -> dict | None:
+    """Sonda um IP e retorna resultado ou None se não houver Nginx."""
+    server_header = get_nginx_version(ip, timeout)
     if server_header is None:
         return None
     is_vuln, ver = check_vulnerability(server_header)
-    hostname = get_hostname(ip)
     return {
         "ip":         ip,
         "hostname":   hostname,
@@ -285,39 +332,62 @@ def scan_ip(ip: str) -> dict | None:
 
 
 # =============================================================================
-# Main
+# CLI
 # =============================================================================
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description=f"Nginx {CVE_ID} ({CVE_NAME}) — vulnerability scanner",
+        description=f"Nginx {CVE_ID} ({CVE_NAME}) — scanner de vulnerabilidade",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
+Exemplos:
   %(prog)s --ip 93.184.216.34
   %(prog)s --cidr 10.0.0.0/24 192.168.1.0/24
   %(prog)s --asn AS15169
   %(prog)s --asn AS13335 AS15169 --cidr 10.0.0.0/8
-  %(prog)s --file targets.txt
+  %(prog)s --file alvos.txt
   %(prog)s --cidr 10.0.0.0/8 --workers 100 --timeout 3
         """,
     )
-    parser.add_argument("--ip",      nargs="+", metavar="IP",   help="One or more individual IP addresses")
-    parser.add_argument("--cidr",    nargs="+", metavar="CIDR", help="One or more CIDR ranges")
-    parser.add_argument("--asn",     nargs="+", metavar="ASN",  help="One or more ASNs (e.g. AS15169 or 15169)")
-    parser.add_argument("--file",    metavar="FILE",            help="File with IPs, CIDRs, and/or ASNs (one per line)")
-    parser.add_argument("--workers", type=int, default=60,      help="Number of concurrent threads (default: 60)")
-    parser.add_argument("--timeout", type=float, default=2.0,   help="HTTP request timeout in seconds (default: 2.0)")
-    parser.add_argument("--no-confirm", action="store_true",    help="Skip confirmation prompt")
+    parser.add_argument("--ip",         nargs="+", metavar="IP",      help="Um ou mais IPs individuais")
+    parser.add_argument("--cidr",       nargs="+", metavar="CIDR",    help="Uma ou mais faixas CIDR")
+    parser.add_argument("--asn",        nargs="+", metavar="ASN",     help="Um ou mais ASNs (ex: AS15169 ou 15169)")
+    parser.add_argument("--file",       metavar="ARQUIVO",            help="Arquivo com IPs, CIDRs e/ou ASNs (um por linha)")
+    parser.add_argument("--workers",    type=int,   default=60,       help="Threads para scan HTTP (padrão: 60)")
+    parser.add_argument("--dns-workers",type=int,   default=DNS_WORKERS, help=f"Threads para resolução DNS (padrão: {DNS_WORKERS})")
+    parser.add_argument("--timeout",    type=float, default=2.0,      help="Timeout das requisições HTTP em segundos (padrão: 2.0)")
+    parser.add_argument("--dns-timeout",type=float, default=DNS_TIMEOUT, help=f"Timeout das queries DNS em segundos (padrão: {DNS_TIMEOUT})")
+    parser.add_argument("--no-confirm", action="store_true",          help="Pula confirmação antes de iniciar")
     return parser.parse_args()
 
 
+def normalize_argv():
+    """Normaliza flags para lowercase, tolerando --CIDR, --IP, --ASN etc."""
+    normalized = []
+    for arg in sys.argv[1:]:
+        if arg.startswith("--") and not arg.startswith("--no"):
+            normalized.append(arg.lower())
+        else:
+            normalized.append(arg)
+    sys.argv[1:] = normalized
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
 def main():
+    normalize_argv()
     args = parse_args()
 
     if not any([args.ip, args.cidr, args.asn, args.file]):
-        print(f"\n{RED}[ERR]{RESET} No targets specified. Use --ip, --cidr, --asn, or --file.\n")
-        print("Run with --help for usage examples.")
+        print(f"\n{RED}[ERR]{RESET} Nenhum alvo especificado.")
+        print(f"\n  Use um ou mais dos argumentos abaixo:")
+        print(f"    {CYAN}--ip{RESET}    <IP>         IP individual        ex: --ip 192.168.1.10")
+        print(f"    {CYAN}--cidr{RESET}  <CIDR>       Faixa de rede        ex: --cidr 10.0.0.0/24")
+        print(f"    {CYAN}--asn{RESET}   <ASN>        Sistema autônomo     ex: --asn AS15169")
+        print(f"    {CYAN}--file{RESET}  <arquivo>    Arquivo com alvos    ex: --file alvos.txt")
+        print(f"\n  Execute com {BOLD}--help{RESET} para ver todos os parâmetros.\n")
         sys.exit(1)
 
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -334,7 +404,11 @@ def main():
     print(f"  {YELLOW}{CVE_ID}{RESET}  \033[90m│\033[0m  {CYAN}{CVE_NAME}{RESET}  \033[90m│\033[0m  Nginx < {FIXED_VERSION} — Scanner de Vulnerabilidade")
     print(f" \033[90m{'─' * 77}\033[0m\n")
 
-    # Resolve all targets to CIDR list
+    if not HAS_DNSPYTHON:
+        print(f"  {YELLOW}[AVISO]{RESET} dnspython não instalado — usando socket padrão para DNS (mais lento).")
+        print(f"          Instale com: {CYAN}pip install dnspython{RESET}\n")
+
+    # Resolve alvos
     prefixes = expand_targets(
         ips=args.ip,
         cidrs=args.cidr,
@@ -343,44 +417,51 @@ def main():
     )
 
     if not prefixes:
-        log("ERR", "No valid targets found after resolution. Aborting.")
+        print(f"\n{RED}[ERR]{RESET} Nenhum alvo válido encontrado após resolução.")
+        print(f"\n  Verifique:")
+        print(f"    - IPs devem ser passados com {CYAN}--ip{RESET}, não --cidr   ex: --ip 192.168.1.10")
+        print(f"    - CIDRs devem incluir prefixo                    ex: --cidr 10.0.0.0{YELLOW}/24{RESET}")
+        print(f"    - ASNs devem seguir o formato AS + número        ex: --asn {YELLOW}AS15169{RESET}")
+        print(f"    - Arquivos devem ter uma entrada por linha       ex: --file alvos.txt\n")
         sys.exit(1)
 
-    # Summary before scan
     total_hosts = sum(
         ipaddress.ip_network(p, strict=False).num_addresses - (2 if ipaddress.ip_network(p, strict=False).prefixlen < 31 else 0)
         for p in prefixes
     )
 
-    print(f" {BOLD}Targets resolved:{RESET} {len(prefixes)} prefix(es) / ~{total_hosts:,} host(s)\n")
+    print(f" {BOLD}Alvos resolvidos:{RESET} {len(prefixes)} prefixo(s) / ~{total_hosts:,} host(s)\n")
     for p in prefixes:
         net = ipaddress.ip_network(p, strict=False)
         print(f"   {CYAN}•{RESET} {p:<20}  ({net.num_addresses} addr)")
     print()
 
     if not args.no_confirm:
-        confirm = input(f" {BOLD}Start scan? [y/N]:{RESET} ").strip().lower()
-        if confirm != "y":
-            print(" Cancelled.")
+        confirm = input(f" {BOLD}Iniciar varredura? [s/N]:{RESET} ").strip().lower()
+        if confirm != "s":
+            print(" Cancelado.")
             sys.exit(0)
 
-    # Initialise output files
+    # Inicializa arquivos de saída
     with open(LOG_VULN, "w", encoding="utf-8") as f:
         f.write(f"# NGINX VULNERABLE — {CVE_ID} | {TIMESTAMP}\n")
-        f.write(f"{'IP':<18} {'HOSTNAME':<35} {'VERSION':<12} STATUS\n")
-        f.write(f"{'='*18} {'='*35} {'='*12} {'='*20}\n")
+        f.write(f"{'IP':<18} {'HOSTNAME':<40} {'VERSAO':<12} STATUS\n")
+        f.write(f"{'='*18} {'='*40} {'='*12} {'='*25}\n")
 
-    fieldnames = ["IP", "HOSTNAME", "NGINX_VERSION", "VULNERABILITY_STATUS"]
+    fieldnames = ["IP", "HOSTNAME", "VERSAO_NGINX", "STATUS_VULNERABILIDADE"]
     with open(LOG_CSV, "w", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=fieldnames).writeheader()
 
     log("HEAD", "══════════════════════════════════════════════════════")
-    log("INFO", f"Start:    {datetime.now()}")
-    log("INFO", f"Prefixes: {len(prefixes)}")
-    log("INFO", f"Workers:  {args.workers}")
-    log("INFO", f"Timeout:  {args.timeout}s")
-    log("INFO", f"Log:      {LOG_FILE}")
-    log("INFO", f"CSV:      {LOG_CSV}")
+    log("INFO", f"Início:       {datetime.now()}")
+    log("INFO", f"Prefixos:     {len(prefixes)}")
+    log("INFO", f"Workers HTTP: {args.workers}")
+    log("INFO", f"Workers DNS:  {args.dns_workers}")
+    log("INFO", f"Timeout HTTP: {args.timeout}s")
+    log("INFO", f"Timeout DNS:  {args.dns_timeout}s")
+    log("INFO", f"Log:          {LOG_FILE}")
+    log("INFO", f"CSV:          {LOG_CSV}")
+    log("INFO", f"Backend DNS:  {'dnspython' if HAS_DNSPYTHON else 'socket (fallback)'}")
     log("HEAD", "══════════════════════════════════════════════════════")
 
     count_vuln  = 0
@@ -393,15 +474,23 @@ def main():
         try:
             network = ipaddress.ip_network(prefix, strict=False)
         except ValueError:
-            log("WARN", f"Skipping invalid prefix: {prefix}")
+            log("WARN", f"Prefixo inválido ignorado: {prefix}")
             continue
 
         ips = [str(ip) for ip in network.hosts()] or [str(network.network_address)]
+        log("HEAD", f"[ {prefix} ] — resolvendo DNS de {len(ips)} host(s) ...")
 
-        log("HEAD", f"[ {prefix} ] — scanning {len(ips)} host(s) ...")
+        # Fase 1 — resolução DNS em batch, antes do scan HTTP
+        dns_map = resolve_hostnames_batch(ips)
 
+        log("HEAD", f"[ {prefix} ] — escaneando {len(ips)} host(s) ...")
+
+        # Fase 2 — scan HTTP paralelo, com hostname já resolvido
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = {executor.submit(scan_ip, ip): ip for ip in ips}
+            futures = {
+                executor.submit(scan_ip, ip, dns_map.get(ip, "N/A"), args.timeout): ip
+                for ip in ips
+            }
             for future in as_completed(futures):
                 res = future.result()
                 if res is None:
@@ -412,46 +501,46 @@ def main():
                 hostname = res["hostname"]
                 ver      = res["version"]
                 is_vuln  = res["vulnerable"]
-                info     = f"{ip:<15} | {hostname:<30} | Ver: {ver}"
+                info     = f"{ip:<15} | {hostname:<35} | Ver: {ver}"
 
                 if is_vuln is True:
-                    status = "VULNERABLE"
+                    status = "VULNERÁVEL"
                     log("VULN", f"{info} → {status}")
                     with open(LOG_VULN, "a", encoding="utf-8") as f:
-                        f.write(f"{ip:<18} {hostname:<35} {ver:<12} {status}\n")
+                        f.write(f"{ip:<18} {hostname:<40} {ver:<12} {status}\n")
                     count_vuln += 1
                 elif is_vuln == "Possibly":
-                    status = "WARNING (Hidden Version)"
+                    status = "AVISO (Versão Oculta)"
                     log("WARN", f"{info} → {status}")
                     count_warn += 1
                 elif is_vuln == "Undetermined":
-                    status = "UNDETERMINED"
+                    status = "INDETERMINADO"
                     log("WARN", f"{info} → {status}")
                     count_warn += 1
                 else:
-                    status = "SAFE"
+                    status = "SEGURO"
                     log("OK", f"{info} → {status}")
                     count_safe += 1
 
                 with open(LOG_CSV, "a", newline="", encoding="utf-8") as f:
                     csv.DictWriter(f, fieldnames=fieldnames).writerow({
-                        "IP":                   ip,
-                        "HOSTNAME":             hostname,
-                        "NGINX_VERSION":        ver,
-                        "VULNERABILITY_STATUS": status,
+                        "IP":                    ip,
+                        "HOSTNAME":              hostname,
+                        "VERSAO_NGINX":          ver,
+                        "STATUS_VULNERABILIDADE": status,
                     })
 
     elapsed = int(time.time() - start_time)
     log("HEAD", "══════════════════════════════════════════════════════")
-    log("INFO", f"End:            {datetime.now()}")
-    log("INFO", f"Elapsed:        {elapsed}s")
-    log("INFO", f"Nginx hosts:    {count_total}")
-    log("INFO", f"Vulnerable:     {count_vuln}")
-    log("INFO", f"Warnings:       {count_warn}")
-    log("INFO", f"Safe:           {count_safe}")
-    log("INFO", f"Full log:       {LOG_FILE}")
-    log("INFO", f"Vulnerable list:{LOG_VULN}")
-    log("INFO", f"CSV results:    {LOG_CSV}")
+    log("INFO", f"Fim:             {datetime.now()}")
+    log("INFO", f"Tempo total:     {elapsed}s")
+    log("INFO", f"Hosts Nginx:     {count_total}")
+    log("INFO", f"Vulneráveis:     {count_vuln}")
+    log("INFO", f"Avisos:          {count_warn}")
+    log("INFO", f"Seguros:         {count_safe}")
+    log("INFO", f"Log completo:    {LOG_FILE}")
+    log("INFO", f"Lista vulneráv.: {LOG_VULN}")
+    log("INFO", f"Resultados CSV:  {LOG_CSV}")
     log("HEAD", "══════════════════════════════════════════════════════")
 
 
@@ -459,5 +548,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n Interrupted.")
+        print("\n Interrompido.")
         sys.exit(0)
