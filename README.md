@@ -3,7 +3,6 @@
 Scanner para detecção de instâncias Nginx vulneráveis ao **CVE-2026-42945 (NGINX RIFT)**.  
 Aceita IPs individuais, faixas CIDR e ASNs como entrada.
 
----
 
 ## Sobre
 
@@ -12,15 +11,12 @@ A ferramenta sonda HTTP e HTTPS nas portas padrão, lê o cabeçalho `Server` da
 
 Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráveis e um CSV para processamento posterior.
 
----
 
 ## Requisitos
 
 ```bash
 pip install requests packaging urllib3
 ```
-
----
 
 ## Uso
 
@@ -52,8 +48,6 @@ python nginx_scanner.py --file alvos.txt
 | `--timeout` | 2.0 | Timeout das requisições HTTP em segundos |
 | `--no-confirm` | — | Pula a confirmação antes de iniciar (útil em automações) |
 
----
-
 ## Saída
 
 Todos os resultados são gravados em `./logs/`:
@@ -72,8 +66,6 @@ Todos os resultados são gravados em `./logs/`:
 | `SEGURO` | Versão confirmada em 1.30.1 ou superior |
 | `AVISO (Versão Oculta)` | Nginx detectado mas versão não exposta — não confirmado seguro |
 | `INDETERMINADO` | Versão não pôde ser interpretada |
-
----
 
 ## Remediação
 
@@ -96,8 +88,6 @@ nginx -v
 ```
 
 Para outras distribuições, consulte a [documentação oficial do Nginx](https://nginx.org/en/linux_packages.html).
-
----
 
 ## Referências
 
