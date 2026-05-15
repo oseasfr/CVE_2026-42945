@@ -1,8 +1,9 @@
-<img width="719" height="191" alt="image" src="https://github.com/user-attachments/assets/51cc8913-dd14-4b52-a2e7-cef2051d0b97" />
+# cve_2026-42945
 
 Scanner para detecção de instâncias Nginx vulneráveis ao **CVE-2026-42945 (NGINX RIFT)**.  
 Aceita IPs individuais, faixas CIDR e ASNs como entrada.
 
+---
 
 ## Sobre
 
@@ -11,12 +12,17 @@ A ferramenta sonda HTTP e HTTPS nas portas padrão, lê o cabeçalho `Server` da
 
 Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráveis e um CSV para processamento posterior.
 
+---
 
 ## Requisitos
 
 ```bash
-pip install requests packaging urllib3
+pip install requests packaging urllib3 dnspython
 ```
+
+> `dnspython` é recomendado para resolução DNS mais rápida e com timeout controlado. Se não estiver instalado, o scanner utiliza automaticamente o `socket` padrão do sistema como fallback, com aviso na inicialização.
+
+---
 
 ## Uso
 
@@ -39,6 +45,7 @@ python nginx_scanner.py --asn AS13335 --cidr 10.0.0.0/8 --ip 1.2.3.4
 # A partir de um arquivo (um IP, CIDR ou ASN por linha)
 python nginx_scanner.py --file alvos.txt
 ```
+
 Exemplo de SCAN CIDR:
 
 <img width="897" height="635" alt="image" src="https://github.com/user-attachments/assets/e36b7928-2e4c-41eb-8bba-f67ca84d23b4" />
@@ -47,9 +54,15 @@ Exemplo de SCAN CIDR:
 
 | Parâmetro | Padrão | Descrição |
 |-----------|--------|-----------|
-| `--workers` | 60 | Número de threads simultâneas |
+| `--workers` | 60 | Número de threads simultâneas para o scan HTTP |
 | `--timeout` | 2.0 | Timeout das requisições HTTP em segundos |
+| `--dns-workers` | 200 | Número de threads simultâneas para resolução DNS reversa |
+| `--dns-timeout` | 1.5 | Timeout das queries DNS em segundos |
 | `--no-confirm` | — | Pula a confirmação antes de iniciar (útil em automações) |
+
+> A resolução DNS é executada em lote antes do scan HTTP, usando uma fila dedicada de threads (`--dns-workers`). Isso evita que a latência do DNS impacte o desempenho da varredura.
+
+---
 
 ## Saída
 
@@ -58,8 +71,8 @@ Todos os resultados são gravados em `./logs/`:
 | Arquivo | Conteúdo |
 |---------|----------|
 | `nginx_scan_<timestamp>.log` | Log completo da varredura |
-| `nginx_scan_<timestamp>_vulnerable.txt` | Apenas hosts vulneráveis |
-| `nginx_scan_<timestamp>_results.csv` | Todos os hosts com status |
+| `nginx_scan_<timestamp>_vulneraveis.txt` | Apenas hosts vulneráveis |
+| `nginx_scan_<timestamp>_resultados.csv` | Todos os hosts com status |
 
 ### Valores de status
 
@@ -69,6 +82,8 @@ Todos os resultados são gravados em `./logs/`:
 | `SEGURO` | Versão confirmada em 1.30.1 ou superior |
 | `AVISO (Versão Oculta)` | Nginx detectado mas versão não exposta — não confirmado seguro |
 | `INDETERMINADO` | Versão não pôde ser interpretada |
+
+---
 
 ## Remediação
 
@@ -91,6 +106,8 @@ nginx -v
 ```
 
 Para outras distribuições, consulte a [documentação oficial do Nginx](https://nginx.org/en/linux_packages.html).
+
+---
 
 ## Referências
 
