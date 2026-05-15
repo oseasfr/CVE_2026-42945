@@ -1,4 +1,4 @@
-# cve_2026-42945
+# CVE_2026-42945
 
 Scanner for detecting Nginx instances vulnerable to **CVE-2026-42945 (NGINX RIFT)**.  
 Accepts individual IPs, CIDR ranges, and ASNs as input.
