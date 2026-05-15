@@ -3,16 +3,12 @@
 Scanner para detecção de instâncias Nginx vulneráveis ao **CVE-2026-42945 (NGINX RIFT)**.  
 Aceita IPs individuais, faixas CIDR e ASNs como entrada.
 
----
-
 ## Sobre
 
 O CVE-2026-42945 afeta todas as versões do Nginx anteriores à **1.30.1**.  
 A ferramenta sonda HTTP e HTTPS nas portas padrão, lê o cabeçalho `Server` da resposta e classifica cada host como vulnerável, seguro ou potencialmente afetado (versão oculta).
 
 Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráveis e um CSV para processamento posterior.
-
----
 
 ## Requisitos
 
@@ -21,8 +17,6 @@ pip install requests packaging urllib3 dnspython
 ```
 
 > `dnspython` é recomendado para resolução DNS mais rápida e com timeout controlado. Se não estiver instalado, o scanner utiliza automaticamente o `socket` padrão do sistema como fallback, com aviso na inicialização.
-
----
 
 ## Uso
 
@@ -61,8 +55,6 @@ Exemplo de SCAN CIDR:
 | `--no-confirm` | — | Pula a confirmação antes de iniciar (útil em automações) |
 
 > A resolução DNS é executada em lote antes do scan HTTP, usando uma fila dedicada de threads (`--dns-workers`). Isso evita que a latência do DNS impacte o desempenho da varredura.
-
----
 
 ## Saída
 
@@ -107,16 +99,16 @@ nginx -v
 
 Para outras distribuições, consulte a [documentação oficial do Nginx](https://nginx.org/en/linux_packages.html).
 
----
-
 ## Referências
 
 - NVD: https://nvd.nist.gov/vuln/detail/CVE-2026-42945
 - Changelog do Nginx: https://nginx.org/en/CHANGES
 
----
-
 ## Aviso Legal
 
-Esta ferramenta é destinada ao uso em infraestrutura própria ou sob autorização explícita.  
-A varredura não autorizada pode violar legislações aplicáveis.
+Este script é destinado ao uso em sua própria infraestrutura ou sob autorização explícita.  
+A varredura não autorizada pode violar diversas legislações, então use com cautela.
+
+No mais, se tiver alguma sugestão de melhoria das funcionalidades ou bugs, fique à vontade para abrir uma issue e me enviar um Pull Request.
+
+Toda contribuição é bem-vinda ! 🚀🚀
