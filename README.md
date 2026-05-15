@@ -6,9 +6,10 @@ Aceita IPs individuais, faixas CIDR e ASNs como entrada.
 ## Sobre
 
 O CVE-2026-42945 afeta todas as versões do Nginx anteriores à **1.30.1**.  
-A ferramenta sonda HTTP e HTTPS nas portas padrão, lê o cabeçalho `Server` da resposta e classifica cada host como vulnerável, seguro ou potencialmente afetado (versão oculta).
 
-Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráveis e um CSV para processamento posterior.
+A ferramenta sonda HTTP e HTTPS nas portas padrão, faz a leitura do cabeçalho `Server` da resposta e classifica cada host como vulnerável, seguro ou potencialmente afetado (versão oculta).
+
+Os resultados são salvos em log, com uma lista dos hosts vulneráveis à CVE e ao final um arquivo .CSV detalhado.
 
 ## Requisitos
 
@@ -16,9 +17,7 @@ Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráve
 pip install requests packaging urllib3 dnspython
 ```
 
-> `dnspython` é recomendado para resolução DNS mais rápida e com timeout controlado. Se não estiver instalado, o scanner utiliza automaticamente o `socket` padrão do sistema como fallback, com aviso na inicialização.
-
-## Uso
+## Utilização
 
 ```bash
 # IP individual
@@ -54,7 +53,7 @@ Exemplo de SCAN CIDR:
 | `--dns-timeout` | 1.5 | Timeout das queries DNS em segundos |
 | `--no-confirm` | — | Pula a confirmação antes de iniciar (útil em automações) |
 
-> A resolução DNS é executada em lote antes do scan HTTP, usando uma fila dedicada de threads (`--dns-workers`). Isso evita que a latência do DNS impacte o desempenho da varredura.
+> A resolução DNS é executada em lote antes do scan HTTP, usando uma fila dedicada de threads (`--dns-workers`), evitando que a latência do DNS impacte no desempenho da varredura.
 
 ## Saída
 
@@ -104,7 +103,7 @@ Para outras distribuições, consulte a [documentação oficial do Nginx](https:
 - NVD: https://nvd.nist.gov/vuln/detail/CVE-2026-42945
 - Changelog do Nginx: https://nginx.org/en/CHANGES
 
-## Aviso Legal
+## Se Liga
 
 Este script é destinado ao uso em sua própria infraestrutura ou sob autorização explícita.  
 A varredura não autorizada pode violar diversas legislações, então use com cautela.
