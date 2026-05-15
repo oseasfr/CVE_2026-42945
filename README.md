@@ -1,20 +1,20 @@
-# CVE_2026-42945
+# cve_2026-42945
 
-Scanner for detecting Nginx instances vulnerable to **CVE-2026-42945 (NGINX RIFT)**.  
-Accepts individual IPs, CIDR ranges, and ASNs as input.
-
----
-
-## About
-
-CVE-2026-42945 affects all Nginx versions prior to **1.30.1**.  
-This tool probes HTTP and HTTPS on standard ports, reads the `Server` response header, and classifies each host as vulnerable, safe, or potentially affected (hidden version).
-
-Results are saved to a timestamped log, a plain-text list of vulnerable hosts, and a CSV file for further processing.
+Scanner para detecção de instâncias Nginx vulneráveis ao **CVE-2026-42945 (NGINX RIFT)**.  
+Aceita IPs individuais, faixas CIDR e ASNs como entrada.
 
 ---
 
-## Requirements
+## Sobre
+
+O CVE-2026-42945 afeta todas as versões do Nginx anteriores à **1.30.1**.  
+A ferramenta sonda HTTP e HTTPS nas portas padrão, lê o cabeçalho `Server` da resposta e classifica cada host como vulnerável, seguro ou potencialmente afetado (versão oculta).
+
+Os resultados são salvos em um log com timestamp, uma lista de hosts vulneráveis e um CSV para processamento posterior.
+
+---
+
+## Requisitos
 
 ```bash
 pip install requests packaging urllib3
@@ -22,62 +22,62 @@ pip install requests packaging urllib3
 
 ---
 
-## Usage
+## Uso
 
 ```bash
-# Single IP
+# IP individual
 python nginx_scanner.py --ip 93.184.216.34
 
-# CIDR range
+# Faixa CIDR
 python nginx_scanner.py --cidr 10.0.0.0/24
 
-# Multiple CIDRs
+# Múltiplos CIDRs
 python nginx_scanner.py --cidr 10.0.0.0/24 192.168.1.0/24
 
-# ASN (prefixes resolved automatically via bgp.tools / RIPE)
+# ASN (prefixes resolvidos automaticamente via bgp.tools / RIPE)
 python nginx_scanner.py --asn AS15169
 
-# Mix of inputs
+# Combinação de entradas
 python nginx_scanner.py --asn AS13335 --cidr 10.0.0.0/8 --ip 1.2.3.4
 
-# From a file (one IP, CIDR, or ASN per line)
-python nginx_scanner.py --file targets.txt
+# A partir de um arquivo (um IP, CIDR ou ASN por linha)
+python nginx_scanner.py --file alvos.txt
 ```
 
-### Optional flags
+### Parâmetros opcionais
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--workers` | 60 | Number of concurrent threads |
-| `--timeout` | 2.0 | HTTP request timeout in seconds |
-| `--no-confirm` | — | Skip confirmation prompt (useful for automation) |
-
----
-
-## Output
-
-All results are written to `./logs/`:
-
-| File | Content |
-|------|---------|
-| `nginx_scan_<timestamp>.log` | Full scan log |
-| `nginx_scan_<timestamp>_vulnerable.txt` | Vulnerable hosts only |
-| `nginx_scan_<timestamp>_results.csv` | All hosts with status |
-
-### Status values
-
-| Status | Meaning |
-|--------|---------|
-| `VULNERABLE` | Version confirmed below 1.30.1 |
-| `SAFE` | Version confirmed at 1.30.1 or above |
-| `WARNING (Hidden Version)` | Nginx detected but version not exposed — not confirmed safe |
-| `UNDETERMINED` | Version string could not be parsed |
+| Parâmetro | Padrão | Descrição |
+|-----------|--------|-----------|
+| `--workers` | 60 | Número de threads simultâneas |
+| `--timeout` | 2.0 | Timeout das requisições HTTP em segundos |
+| `--no-confirm` | — | Pula a confirmação antes de iniciar (útil em automações) |
 
 ---
 
-## Remediation
+## Saída
 
-Update Nginx to **1.30.1 or later** using the official nginx.org repository for your distribution.
+Todos os resultados são gravados em `./logs/`:
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `nginx_scan_<timestamp>.log` | Log completo da varredura |
+| `nginx_scan_<timestamp>_vulnerable.txt` | Apenas hosts vulneráveis |
+| `nginx_scan_<timestamp>_results.csv` | Todos os hosts com status |
+
+### Valores de status
+
+| Status | Significado |
+|--------|-------------|
+| `VULNERÁVEL` | Versão confirmada abaixo de 1.30.1 |
+| `SEGURO` | Versão confirmada em 1.30.1 ou superior |
+| `AVISO (Versão Oculta)` | Nginx detectado mas versão não exposta — não confirmado seguro |
+| `INDETERMINADO` | Versão não pôde ser interpretada |
+
+---
+
+## Remediação
+
+Atualize o Nginx para a versão **1.30.1 ou superior** usando o repositório oficial do nginx.org.
 
 ```bash
 # Ubuntu / Debian
@@ -95,18 +95,18 @@ apt update && apt install --only-upgrade nginx
 nginx -v
 ```
 
-For other distributions, refer to the [official Nginx install docs](https://nginx.org/en/linux_packages.html).
+Para outras distribuições, consulte a [documentação oficial do Nginx](https://nginx.org/en/linux_packages.html).
 
 ---
 
-## References
+## Referências
 
 - NVD: https://nvd.nist.gov/vuln/detail/CVE-2026-42945
-- Nginx changelog: https://nginx.org/en/CHANGES
+- Changelog do Nginx: https://nginx.org/en/CHANGES
 
 ---
 
-## Disclaimer
+## Aviso Legal
 
-This tool is intended for use on infrastructure you own or have explicit authorization to scan.  
-Unauthorized scanning may violate applicable laws.
+Esta ferramenta é destinada ao uso em infraestrutura própria ou sob autorização explícita.  
+A varredura não autorizada pode violar legislações aplicáveis.
