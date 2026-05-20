@@ -49,7 +49,7 @@ Exemplo de SCAN CIDR:
 
 Exemplo de SCAN ASN:
 
-<img width="822" height="582" alt="image" src="https://github.com/user-attachments/assets/4550e199-287e-49b8-ba72-f520ebf18f6d" />
+<img width="848" height="519" alt="image" src="https://github.com/user-attachments/assets/46681ef8-15a3-4836-82a1-3ede0b5d97ee" />
 
 ### Parâmetros opcionais
 
