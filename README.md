@@ -39,9 +39,17 @@ python nginx_scanner.py --asn AS13335 --cidr 10.0.0.0/8 --ip 1.2.3.4
 python nginx_scanner.py --file alvos.txt
 ```
 
+Exemplo de SCAN IP:
+
+<img width="979" height="780" alt="image" src="https://github.com/user-attachments/assets/4eb0254a-732c-405f-b14f-0860ee2f848e" />
+
 Exemplo de SCAN CIDR:
 
 <img width="897" height="635" alt="image" src="https://github.com/user-attachments/assets/e36b7928-2e4c-41eb-8bba-f67ca84d23b4" />
+
+Exemplo de SCAN ASN:
+
+<img width="822" height="582" alt="image" src="https://github.com/user-attachments/assets/4550e199-287e-49b8-ba72-f520ebf18f6d" />
 
 ### Parâmetros opcionais
 
