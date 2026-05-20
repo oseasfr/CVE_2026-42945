@@ -29,7 +29,7 @@ python nginx_scanner.py --cidr 10.0.0.0/24
 # Múltiplos CIDRs
 python nginx_scanner.py --cidr 10.0.0.0/24 192.168.1.0/24
 
-# ASN (prefixes resolvidos automaticamente via bgp.tools / RIPE)
+# ASN (prefixos originados resolvidos via RIPE Stat, fallback para bgp.tools)
 python nginx_scanner.py --asn AS15169
 
 # Combinação de entradas
