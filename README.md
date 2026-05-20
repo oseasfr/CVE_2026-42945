@@ -1,4 +1,4 @@
-<img width="719" height="191" alt="image" src="https://github.com/user-attachments/assets/51cc8913-dd14-4b52-a2e7-cef2051d0b97" />
+<img width="727" height="188" alt="image" src="https://github.com/user-attachments/assets/c6ceec02-9f60-47c9-9991-4b9c228e8e82" />
 
 Scanner para detecção de instâncias Nginx vulneráveis ao **CVE-2026-42945 (NGINX RIFT)**.  
 Aceita IPs individuais, faixas CIDR e ASNs como entrada.
