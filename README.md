@@ -45,7 +45,7 @@ Exemplo de SCAN IP:
 
 Exemplo de SCAN CIDR:
 
-<img width="783" height="324" alt="image" src="https://github.com/user-attachments/assets/72cf17f9-493a-4fe5-8123-258183ee7f8e" />
+<img width="1035" height="871" alt="image" src="https://github.com/user-attachments/assets/4a36ef8f-b940-4837-85f6-3f1213c8af4e" />
 
 Exemplo de SCAN ASN:
 
